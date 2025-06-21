@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LaTeX Table Generator</title>
+
+  <!-- Jspreadsheet and jsuites (MIT licensed) -->
+  <link rel="stylesheet" href="https://jspreadsheet.com/v7/jspreadsheet.css" />
+  <link rel="stylesheet" href="https://jspreadsheet.com/v7/jsuites.css" />
+  <script src="https://jspreadsheet.com/v7/jspreadsheet.js"></script>
+  <script src="https://jspreadsheet.com/v7/jsuites.js"></script>
+
+  <!-- MathJax for LaTeX preview -->
+  <script>
+    window.MathJax = {
+      tex: { displayMath: [['$$','$$'], ['\\[','\\]']] },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      max-width: 900px;
+    }
+    #toolbar button {
+      margin-right: 5px;
+    }
+    textarea {
+      width: 100%;
+      height: 200px;
+      margin-top: 10px;
+      font-family: monospace;
+    }
+    #preview {
+      margin-top: 20px;
+      padding: 10px;
+      background: #f4f4f4;
+      border: 1px solid #ccc;
+    }
+    #spreadsheet {
+      min-height: 200px;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>📋 LaTeX Table Generator with Multirow + Live Preview</h2>
+
+  <div id="toolbar">
+    <button onclick="addRow()">➕ Row</button>
+    <button onclick="addColumn()">➕ Column</button>
+    <button onclick="deleteRow()">🗑️ Row</button>
+    <button onclick="deleteColumn()">🗑️ Column</button>
+    <button onclick="toggleBold()">🅱️ Bold</button>
+    <button onclick="align('left')">⬅️ Left</button>
+    <button onclick="align('center')">↔️ Center</button>
+    <button onclick="align('right')">➡️ Right</button>
+    <button onclick="mergeCells()">🔗 Merge</button>
+    <button onclick="applyMultirow()">⬇️ Multirow</button>
+  </div>
+
+  <div id="spreadsheet"></div>
+
+  <button onclick="exportToLatex()">📤 Export to LaTeX</button>
+  <textarea id="latexOutput" readonly></textarea>
+
+  <h3>🔍 Live Preview</h3>
+  <div id="preview">(Rendered LaTeX table will appear here)</div>
+
+  <script>
+    window.onload = function () {
+      window.sheet = jspreadsheet(document.getElementById('spreadsheet'), {
+        data: [
+          ['Header 1', 'Header 2', 'Header 3'],
+          ['Row 1', '', ''],
+          ['Row 2', '', '']
+        ],
+        columns: [{}, {}, {}],
+        allowInsertRow: true,
+        allowInsertColumn: true,
+        allowDeleteRow: true,
+        allowDeleteColumn: true,
+        mergeCells: {},
+        style: {}
+      });
+
+      const multirows = {};
+
+      window.addRow = () => sheet.insertRow();
+      window.addColumn = () => sheet.insertColumn();
+      window.deleteRow = () => {
+        const selected = sheet.getSelectedRows();
+        selected.forEach(i => sheet.deleteRow(i));
+      };
+      window.deleteColumn = () => {
+        const selected = sheet.getSelectedColumns();
+        selected.forEach(i => sheet.deleteColumn(i));
+      };
+      window.toggleBold = () => {
+        const selection = sheet.getSelectedCells();
+        selection.forEach(cell => {
+          const style = sheet.getStyle(cell);
+          const isBold = style['font-weight'] === 'bold';
+          sheet.setStyle(cell, { 'font-weight': isBold ? '' : 'bold' });
+        });
+      };
+      window.align = (direction) => {
+        const selection = sheet.getSelectedCells();
+        selection.forEach(cell => {
+          sheet.setStyle(cell, { 'text-align': direction });
+        });
+      };
+      window.mergeCells = () => {
+        const selection = sheet.getSelectedCells();
+        if (selection.length > 1) {
+          const [start, end] = sheet.getSelectedRange();
+          const [x1, y1] = start.split('-').map(Number);
+          const [x2, y2] = end.split('-').map(Number);
+          const colspan = x2 - x1 + 1;
+          const rowspan = y2 - y1 + 1;
+          sheet.setMerge(`${x1}-${y1}`, colspan, rowspan);
+        }
+      };
+      window.applyMultirow = () => {
+        const [start, end] = sheet.getSelectedRange();
+        if (!start || !end) return;
+        const [x1, y1] = start.split('-').map(Number);
+        const [x2, y2] = end.split('-').map(Number);
+        const rowspan = y2 - y1 + 1;
+        if (rowspan > 1) multirows[`${x1}-${y1}`] = rowspan;
+      };
+      window.exportToLatex = () => {
+        const data = sheet.getData();
+        const styles = sheet.getStyle();
+        const merges = sheet.getMerge();
+        const numRows = data.length;
+        const numCols = Math.max(...data.map(r => r.length));
+        const alignMap = { 'left': 'l', 'center': 'c', 'right': 'r' };
+        const latexRows = [];
+
+        for (let row = 0; row < numRows; row++) {
+          let latexRow = '';
+          let skipCols = 0;
+          for (let col = 0; col < numCols; col++) {
+            if (skipCols > 0) {
+              skipCols--;
+              continue;
+            }
+            const cellKey = `${col}-${row}`;
+            let cell = (data[row][col] || '').toString().replace(/([&%$#_{}~^\\])/g, '\\$1');
+            const style = styles[cellKey] || {};
+            const merge = merges[cellKey];
+
+            if (style['font-weight'] === 'bold') {
+              cell = `\\textbf{${cell}}`;
+            }
+
+            const align = alignMap[style['text-align']] || 'c';
+
+            if (multirows[cellKey]) {
+              cell = `\\multirow{${multirows[cellKey]}}{*}{${cell}}`;
+            }
+
+            if (merge && merge.colspan > 1) {
+              latexRow += `\\multicolumn{${merge.colspan}}{|${align}|}{${cell}}`;
+              skipCols = merge.colspan - 1;
+            } else {
+              latexRow += cell;
+            }
+
+            if (col < numCols - 1) latexRow += ' & ';
+          }
+          latexRows.push(latexRow + ' \\ \\hline');
+        }
+
+        const latex = `\\begin{tabular}{|${'c|'.repeat(numCols)}}
+\\hline
+${latexRows.join('\n')}
+\\end{tabular}`;
+        document.getElementById('latexOutput').value = latex;
+        document.getElementById('preview').innerHTML = `$$${latex}$$`;
+        MathJax.typeset();
+      };
+    };
+  </script>
+</body>
+</html>
