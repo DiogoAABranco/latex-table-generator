@@ -2,23 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>LaTeX Table Generator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LaTeX Table Generator - Open Source</title>
 
-  <!-- Jspreadsheet and jsuites (MIT licensed) -->
-  <link rel="stylesheet" href="https://jspreadsheet.com/v7/jspreadsheet.css" />
-  <link rel="stylesheet" href="https://jspreadsheet.com/v7/jsuites.css" />
-  <script src="https://jspreadsheet.com/v7/jspreadsheet.js"></script>
-  <script src="https://jspreadsheet.com/v7/jsuites.js"></script>
-
-  <!-- MathJax for LaTeX preview -->
-  <script>
-    window.MathJax = {
-      tex: { displayMath: [['$$','$$'], ['\\[','\\]']] },
-      svg: { fontCache: 'global' }
-    };
-  </script>
-  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <!-- Jexcel 4.x (open source MIT) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jexcel@4/dist/jexcel.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites@4/dist/jsuites.css" />
+  <script src="https://cdn.jsdelivr.net/npm/jexcel@4/dist/jexcel.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsuites@4/dist/jsuites.js"></script>
 
   <style>
     body {
@@ -31,24 +22,19 @@
     }
     textarea {
       width: 100%;
-      height: 200px;
+      height: 250px;
       margin-top: 10px;
       font-family: monospace;
     }
-    #preview {
-      margin-top: 20px;
-      padding: 10px;
-      background: #f4f4f4;
-      border: 1px solid #ccc;
-    }
     #spreadsheet {
       min-height: 200px;
+      margin-bottom: 10px;
     }
   </style>
 </head>
 <body>
 
-  <h2>📋 LaTeX Table Generator with Multirow + Live Preview</h2>
+  <h2>📋 LaTeX Table Generator (Open Source)</h2>
 
   <div id="toolbar">
     <button onclick="addRow()">➕ Row</button>
@@ -60,20 +46,19 @@
     <button onclick="align('center')">↔️ Center</button>
     <button onclick="align('right')">➡️ Right</button>
     <button onclick="mergeCells()">🔗 Merge</button>
-    <button onclick="applyMultirow()">⬇️ Multirow</button>
   </div>
 
   <div id="spreadsheet"></div>
 
   <button onclick="exportToLatex()">📤 Export to LaTeX</button>
-  <textarea id="latexOutput" readonly></textarea>
-
-  <h3>🔍 Live Preview</h3>
-  <div id="preview">(Rendered LaTeX table will appear here)</div>
+  <textarea id="latexOutput" readonly placeholder="LaTeX code will appear here after export"></textarea>
 
   <script>
+    let mergedCells = [];
+    let cellFormats = {}; // Store { "row-col": { bold: true, align: 'left' } }
+
     window.onload = function () {
-      window.sheet = jspreadsheet(document.getElementById('spreadsheet'), {
+      window.sheet = jexcel(document.getElementById('spreadsheet'), {
         data: [
           ['Header 1', 'Header 2', 'Header 3'],
           ['Row 1', '', ''],
@@ -84,11 +69,16 @@
         allowInsertColumn: true,
         allowDeleteRow: true,
         allowDeleteColumn: true,
-        mergeCells: {},
-        style: {}
+        mergeCells: [],
+        minDimensions: [3,3]
       });
 
-      const multirows = {};
+      function getSelectedCellsKeys() {
+        return sheet.getSelectedCells().map(cell => {
+          const [row, col] = cell.split('-');
+          return `${row}-${col}`;
+        });
+      }
 
       window.addRow = () => sheet.insertRow();
       window.addColumn = () => sheet.insertColumn();
@@ -100,90 +90,138 @@
         const selected = sheet.getSelectedColumns();
         selected.forEach(i => sheet.deleteColumn(i));
       };
+
       window.toggleBold = () => {
-        const selection = sheet.getSelectedCells();
-        selection.forEach(cell => {
-          const style = sheet.getStyle(cell);
-          const isBold = style['font-weight'] === 'bold';
-          sheet.setStyle(cell, { 'font-weight': isBold ? '' : 'bold' });
+        const keys = getSelectedCellsKeys();
+        keys.forEach(key => {
+          const td = sheet.getCell(key);
+          const current = cellFormats[key] || {};
+          const isBold = current.bold || false;
+          // Toggle bold
+          current.bold = !isBold;
+          cellFormats[key] = current;
+          td.style.fontWeight = current.bold ? 'bold' : '';
         });
       };
+
       window.align = (direction) => {
-        const selection = sheet.getSelectedCells();
-        selection.forEach(cell => {
-          sheet.setStyle(cell, { 'text-align': direction });
+        const keys = getSelectedCellsKeys();
+        keys.forEach(key => {
+          const td = sheet.getCell(key);
+          const current = cellFormats[key] || {};
+          current.align = direction;
+          cellFormats[key] = current;
+          td.style.textAlign = direction;
         });
       };
+
       window.mergeCells = () => {
         const selection = sheet.getSelectedCells();
         if (selection.length > 1) {
-          const [start, end] = sheet.getSelectedRange();
-          const [x1, y1] = start.split('-').map(Number);
-          const [x2, y2] = end.split('-').map(Number);
+          const first = selection[0].split('-').map(Number);
+          const last = selection[selection.length - 1].split('-').map(Number);
+          const x1 = Math.min(first[0], last[0]);
+          const y1 = Math.min(first[1], last[1]);
+          const x2 = Math.max(first[0], last[0]);
+          const y2 = Math.max(first[1], last[1]);
           const colspan = x2 - x1 + 1;
           const rowspan = y2 - y1 + 1;
-          sheet.setMerge(`${x1}-${y1}`, colspan, rowspan);
+
+          sheet.setMerge(x1, y1, colspan, rowspan);
+
+          mergedCells = mergedCells.filter(m =>
+            (m.row + m.rowspan - 1 < x1 || m.row > x2) ||
+            (m.col + m.colspan - 1 < y1 || m.col > y2)
+          );
+
+          mergedCells.push({row: x1, col: y1, colspan: colspan, rowspan: rowspan});
         }
       };
-      window.applyMultirow = () => {
-        const [start, end] = sheet.getSelectedRange();
-        if (!start || !end) return;
-        const [x1, y1] = start.split('-').map(Number);
-        const [x2, y2] = end.split('-').map(Number);
-        const rowspan = y2 - y1 + 1;
-        if (rowspan > 1) multirows[`${x1}-${y1}`] = rowspan;
-      };
+
       window.exportToLatex = () => {
         const data = sheet.getData();
-        const styles = sheet.getStyle();
-        const merges = sheet.getMerge();
         const numRows = data.length;
         const numCols = Math.max(...data.map(r => r.length));
-        const alignMap = { 'left': 'l', 'center': 'c', 'right': 'r' };
         const latexRows = [];
+
+        function isCellMerged(row, col) {
+          for (const m of mergedCells) {
+            if (row >= m.row && row < m.row + m.rowspan &&
+                col >= m.col && col < m.col + m.colspan) {
+              if (row !== m.row || col !== m.col) return true;
+            }
+          }
+          return false;
+        }
+
+        function latexAlign(align) {
+          // LaTeX column alignment: l, c, r
+          if (align === 'left') return 'l';
+          if (align === 'right') return 'r';
+          return 'c';
+        }
+
+        // Determine overall column alignments by majority or fallback to center
+        const columnAligns = [];
+        for (let col = 0; col < numCols; col++) {
+          const counts = {left: 0, center: 0, right: 0};
+          for (let row = 0; row < numRows; row++) {
+            const key = `${row}-${col}`;
+            const fmt = cellFormats[key];
+            if (fmt && fmt.align) counts[fmt.align]++;
+            else counts.center++;
+          }
+          // Pick max alignment
+          let maxAlign = 'center';
+          let maxCount = counts.center;
+          for (const a of ['left','center','right']) {
+            if (counts[a] > maxCount) {
+              maxAlign = a;
+              maxCount = counts[a];
+            }
+          }
+          columnAligns.push(latexAlign(maxAlign));
+        }
+
+        // Start building tabular with alignment
+        let tabularHeader = `\\begin{tabular}{|${columnAligns.map(a => a + '|').join('')}}\n\\hline\n`;
 
         for (let row = 0; row < numRows; row++) {
           let latexRow = '';
-          let skipCols = 0;
+          let firstCol = true;
           for (let col = 0; col < numCols; col++) {
-            if (skipCols > 0) {
-              skipCols--;
-              continue;
-            }
-            const cellKey = `${col}-${row}`;
-            let cell = (data[row][col] || '').toString().replace(/([&%$#_{}~^\\])/g, '\\$1');
-            const style = styles[cellKey] || {};
-            const merge = merges[cellKey];
+            if (isCellMerged(row, col)) continue;
 
-            if (style['font-weight'] === 'bold') {
-              cell = `\\textbf{${cell}}`;
-            }
+            let cellText = (data[row][col] || '').toString()
+              .replace(/([&%$#_{}~^\\])/g, '\\$1');
 
-            const align = alignMap[style['text-align']] || 'c';
+            const key = `${row}-${col}`;
+            const fmt = cellFormats[key] || {};
 
-            if (multirows[cellKey]) {
-              cell = `\\multirow{${multirows[cellKey]}}{*}{${cell}}`;
+            if (fmt.bold) {
+              cellText = `\\textbf{${cellText}}`;
             }
 
-            if (merge && merge.colspan > 1) {
-              latexRow += `\\multicolumn{${merge.colspan}}{|${align}|}{${cell}}`;
-              skipCols = merge.colspan - 1;
-            } else {
-              latexRow += cell;
+            const merge = mergedCells.find(m => m.row === row && m.col === col);
+            if (merge) {
+              if (merge.colspan > 1 && merge.rowspan > 1) {
+                cellText = `\\multirow{${merge.rowspan}}{*}{\\multicolumn{${merge.colspan}}{|c|}{${cellText}}}`;
+              } else if (merge.colspan > 1) {
+                cellText = `\\multicolumn{${merge.colspan}}{|c|}{${cellText}}`;
+              } else if (merge.rowspan > 1) {
+                cellText = `\\multirow{${merge.rowspan}}{*}{${cellText}}`;
+              }
             }
 
-            if (col < numCols - 1) latexRow += ' & ';
+            if (!firstCol) latexRow += ' & ';
+            latexRow += cellText;
+            firstCol = false;
           }
-          latexRows.push(latexRow + ' \\ \\hline');
+          latexRows.push(latexRow + ' \\\\ \\hline');
         }
 
-        const latex = `\\begin{tabular}{|${'c|'.repeat(numCols)}}
-\\hline
-${latexRows.join('\n')}
-\\end{tabular}`;
+        const latex = tabularHeader + latexRows.join('\n') + '\n\\end{tabular}';
         document.getElementById('latexOutput').value = latex;
-        document.getElementById('preview').innerHTML = `$$${latex}$$`;
-        MathJax.typeset();
       };
     };
   </script>
